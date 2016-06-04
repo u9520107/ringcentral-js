@@ -227,8 +227,6 @@ export default class Platform extends Observable {
 
         try {
 
-            this.emit(this.events.beforeRefresh);
-
             if (this._queue.isPaused()) {
 
                 await this._queue.poll();
@@ -243,14 +241,19 @@ export default class Platform extends Observable {
 
             }
 
+            this.emit(this.events.beforeRefresh);
+
+            if (!this._auth.refreshToken()) throw new Error('Refresh token is missing');
+            if (!this._auth.refreshTokenValid()) throw new Error('Refresh token has expired');
+
             this._queue.pause();
+
 
             // Make sure all existing AJAX calls had a chance to reach the server
             await delay(Platform._refreshDelayMs);
 
             // Perform sanity checks
-            if (!this._auth.refreshToken()) throw new Error('Refresh token is missing');
-            if (!this._auth.refreshTokenValid()) throw new Error('Refresh token has expired');
+
             if (!this._queue.isPaused()) throw new Error('Queue was resumed before refresh call');
 
             /** @type {ApiResponse} */
