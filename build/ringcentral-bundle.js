@@ -798,7 +798,7 @@ function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj;
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-var SDK = (function () {
+var SDK = function () {
 
     /**
      * @namespace RingCentral
@@ -832,6 +832,7 @@ var SDK = (function () {
      * @return {Platform}
      */
 
+
     SDK.prototype.platform = function platform() {
         return this._platform;
     };
@@ -839,6 +840,7 @@ var SDK = (function () {
     /**
      * @return {Subscription}
      */
+
 
     SDK.prototype.createSubscription = function createSubscription() {
         return new _Subscription2.default(this._pubnubFactory, this._platform);
@@ -848,6 +850,7 @@ var SDK = (function () {
      * @return {CachedSubscription}
      */
 
+
     SDK.prototype.createCachedSubscription = function createCachedSubscription(cacheKey) {
         return new _CachedSubscription2.default(this._pubnubFactory, this._platform, this._cache, cacheKey);
     };
@@ -856,12 +859,13 @@ var SDK = (function () {
      * @return {Cache}
      */
 
+
     SDK.prototype.cache = function cache() {
         return this._cache;
     };
 
     return SDK;
-})();
+}();
 
 SDK.version = '2.0.5';
 SDK.server = {
@@ -895,6 +899,7 @@ SDK.mocks = {
 SDK.pubnub = {
     PubnubMockFactory: _PubnubFactory2.default
 };
+
 
 module.exports = SDK;
 
@@ -2150,6 +2155,9 @@ var currentQueue;
 var queueIndex = -1;
 
 function cleanUpNextTick() {
+    if (!draining || !currentQueue) {
+        return;
+    }
     draining = false;
     if (currentQueue.length) {
         queue = currentQueue.concat(queue);
@@ -2261,11 +2269,26 @@ module.exports = function() { throw new Error("define cannot be used indirect");
 /* 10 */
 /***/ function(module, exports) {
 
-(function() {
+(function(self) {
   'use strict';
 
   if (self.fetch) {
     return
+  }
+
+  var support = {
+    searchParams: 'URLSearchParams' in self,
+    iterable: 'Symbol' in self && 'iterator' in Symbol,
+    blob: 'FileReader' in self && 'Blob' in self && (function() {
+      try {
+        new Blob()
+        return true
+      } catch(e) {
+        return false
+      }
+    })(),
+    formData: 'FormData' in self,
+    arrayBuffer: 'ArrayBuffer' in self
   }
 
   function normalizeName(name) {
@@ -2283,6 +2306,24 @@ module.exports = function() { throw new Error("define cannot be used indirect");
       value = String(value)
     }
     return value
+  }
+
+  // Build a destructive iterator for the value list
+  function iteratorFor(items) {
+    var iterator = {
+      next: function() {
+        var value = items.shift()
+        return {done: value === undefined, value: value}
+      }
+    }
+
+    if (support.iterable) {
+      iterator[Symbol.iterator] = function() {
+        return iterator
+      }
+    }
+
+    return iterator
   }
 
   function Headers(headers) {
@@ -2340,6 +2381,28 @@ module.exports = function() { throw new Error("define cannot be used indirect");
     }, this)
   }
 
+  Headers.prototype.keys = function() {
+    var items = []
+    this.forEach(function(value, name) { items.push(name) })
+    return iteratorFor(items)
+  }
+
+  Headers.prototype.values = function() {
+    var items = []
+    this.forEach(function(value) { items.push(value) })
+    return iteratorFor(items)
+  }
+
+  Headers.prototype.entries = function() {
+    var items = []
+    this.forEach(function(value, name) { items.push([name, value]) })
+    return iteratorFor(items)
+  }
+
+  if (support.iterable) {
+    Headers.prototype[Symbol.iterator] = Headers.prototype.entries
+  }
+
   function consumed(body) {
     if (body.bodyUsed) {
       return Promise.reject(new TypeError('Already read'))
@@ -2370,21 +2433,8 @@ module.exports = function() { throw new Error("define cannot be used indirect");
     return fileReaderReady(reader)
   }
 
-  var support = {
-    blob: 'FileReader' in self && 'Blob' in self && (function() {
-      try {
-        new Blob();
-        return true
-      } catch(e) {
-        return false
-      }
-    })(),
-    formData: 'FormData' in self
-  }
-
   function Body() {
     this.bodyUsed = false
-
 
     this._initBody = function(body) {
       this._bodyInit = body
@@ -2394,10 +2444,25 @@ module.exports = function() { throw new Error("define cannot be used indirect");
         this._bodyBlob = body
       } else if (support.formData && FormData.prototype.isPrototypeOf(body)) {
         this._bodyFormData = body
+      } else if (support.searchParams && URLSearchParams.prototype.isPrototypeOf(body)) {
+        this._bodyText = body.toString()
       } else if (!body) {
         this._bodyText = ''
+      } else if (support.arrayBuffer && ArrayBuffer.prototype.isPrototypeOf(body)) {
+        // Only support ArrayBuffers for POST method.
+        // Receiving ArrayBuffers happens via Blobs, instead.
       } else {
         throw new Error('unsupported BodyInit type')
+      }
+
+      if (!this.headers.get('content-type')) {
+        if (typeof body === 'string') {
+          this.headers.set('content-type', 'text/plain;charset=UTF-8')
+        } else if (this._bodyBlob && this._bodyBlob.type) {
+          this.headers.set('content-type', this._bodyBlob.type)
+        } else if (support.searchParams && URLSearchParams.prototype.isPrototypeOf(body)) {
+          this.headers.set('content-type', 'application/x-www-form-urlencoded;charset=UTF-8')
+        }
       }
     }
 
@@ -2499,6 +2564,10 @@ module.exports = function() { throw new Error("define cannot be used indirect");
     this._initBody(body)
   }
 
+  Request.prototype.clone = function() {
+    return new Request(this)
+  }
+
   function decode(body) {
     var form = new FormData()
     body.trim().split('&').forEach(function(bytes) {
@@ -2514,7 +2583,7 @@ module.exports = function() { throw new Error("define cannot be used indirect");
 
   function headers(xhr) {
     var head = new Headers()
-    var pairs = xhr.getAllResponseHeaders().trim().split('\n')
+    var pairs = (xhr.getAllResponseHeaders() || '').trim().split('\n')
     pairs.forEach(function(header) {
       var split = header.trim().split(':')
       var key = split.shift().trim()
@@ -2531,31 +2600,55 @@ module.exports = function() { throw new Error("define cannot be used indirect");
       options = {}
     }
 
-    this._initBody(bodyInit)
     this.type = 'default'
-    this.url = null
     this.status = options.status
     this.ok = this.status >= 200 && this.status < 300
     this.statusText = options.statusText
     this.headers = options.headers instanceof Headers ? options.headers : new Headers(options.headers)
     this.url = options.url || ''
+    this._initBody(bodyInit)
   }
 
   Body.call(Response.prototype)
 
-  self.Headers = Headers;
-  self.Request = Request;
-  self.Response = Response;
+  Response.prototype.clone = function() {
+    return new Response(this._bodyInit, {
+      status: this.status,
+      statusText: this.statusText,
+      headers: new Headers(this.headers),
+      url: this.url
+    })
+  }
 
-  self.fetch = function(input, init) {
-    var request
-    if (Request.prototype.isPrototypeOf(input) && !init) {
-      request = input
-    } else {
-      request = new Request(input, init)
+  Response.error = function() {
+    var response = new Response(null, {status: 0, statusText: ''})
+    response.type = 'error'
+    return response
+  }
+
+  var redirectStatuses = [301, 302, 303, 307, 308]
+
+  Response.redirect = function(url, status) {
+    if (redirectStatuses.indexOf(status) === -1) {
+      throw new RangeError('Invalid status code')
     }
 
+    return new Response(null, {status: status, headers: {location: url}})
+  }
+
+  self.Headers = Headers
+  self.Request = Request
+  self.Response = Response
+
+  self.fetch = function(input, init) {
     return new Promise(function(resolve, reject) {
+      var request
+      if (Request.prototype.isPrototypeOf(input) && !init) {
+        request = input
+      } else {
+        request = new Request(input, init)
+      }
+
       var xhr = new XMLHttpRequest()
 
       function responseURL() {
@@ -2568,26 +2661,25 @@ module.exports = function() { throw new Error("define cannot be used indirect");
           return xhr.getResponseHeader('X-Request-URL')
         }
 
-        return;
+        return
       }
 
       xhr.onload = function() {
-        var status = (xhr.status === 1223) ? 204 : xhr.status
-        if (status < 100 || status > 599) {
-          reject(new TypeError('Network request failed'))
-          return
-        }
         var options = {
-          status: status,
+          status: xhr.status,
           statusText: xhr.statusText,
           headers: headers(xhr),
           url: responseURL()
         }
-        var body = 'response' in xhr ? xhr.response : xhr.responseText;
+        var body = 'response' in xhr ? xhr.response : xhr.responseText
         resolve(new Response(body, options))
       }
 
       xhr.onerror = function() {
+        reject(new TypeError('Network request failed'))
+      }
+
+      xhr.ontimeout = function() {
         reject(new TypeError('Network request failed'))
       }
 
@@ -2609,14 +2701,14 @@ module.exports = function() { throw new Error("define cannot be used indirect");
     })
   }
   self.fetch.polyfill = true
-})();
+})(typeof self !== 'undefined' ? self : this);
 
 
 /***/ },
 /* 11 */
 /***/ function(module, exports, __webpack_require__) {
 
-/* WEBPACK VAR INJECTION */(function(module) {// Version: 3.7.16
+/* WEBPACK VAR INJECTION */(function(module) {// Version: 3.7.23
 /* =-====================================================================-= */
 /* =-====================================================================-= */
 /* =-=========================     JSON     =============================-= */
@@ -2779,7 +2871,7 @@ var NOW             = 1
 ,   READY_BUFFER    = []
 ,   PRESENCE_SUFFIX = '-pnpres'
 ,   DEF_WINDOWING   = 10     // MILLISECONDS.
-,   DEF_TIMEOUT     = 10000  // MILLISECONDS.
+,   DEF_TIMEOUT     = 15000  // MILLISECONDS.
 ,   DEF_SUB_TIMEOUT = 310    // SECONDS.
 ,   DEF_KEEPALIVE   = 60     // SECONDS (FOR TIMESYNC).
 ,   SECOND          = 1000   // A THOUSAND MILLISECONDS.
@@ -2787,7 +2879,7 @@ var NOW             = 1
 ,   PARAMSBIT       = '&'
 ,   PRESENCE_HB_THRESHOLD = 5
 ,   PRESENCE_HB_DEFAULT  = 30
-,   SDK_VER         = '3.7.16'
+,   SDK_VER         = '3.7.23'
 ,   REPL            = /{([\w\-]+)}/g;
 
 /**
@@ -3340,7 +3432,6 @@ function PN_API(setup) {
     // Announce Leave Event
     var SELF = {
         'LEAVE' : function( channel, blocking, auth_key, callback, error ) {
-
             var data   = { 'uuid' : UUID, 'auth' : auth_key || AUTH_KEY }
             ,   origin = nextorigin(ORIGIN)
             ,   callback = callback || function(){}
@@ -3383,7 +3474,6 @@ function PN_API(setup) {
 
             xdr({
                 blocking : blocking || SSL,
-                timeout  : 2000,
                 callback : jsonp,
                 data     : params,
                 success  : function(response) {
@@ -3439,7 +3529,6 @@ function PN_API(setup) {
 
             xdr({
                 blocking : blocking || SSL,
-                timeout  : 5000,
                 callback : jsonp,
                 data     : params,
                 success  : function(response) {
@@ -3786,7 +3875,6 @@ function PN_API(setup) {
             xdr({
                 callback : jsonp,
                 data     : _get_url_params(data),
-                timeout  : SECOND * 5,
                 url      : [STD_ORIGIN, 'time', jsonp],
                 success  : function(response) { callback(response[0]) },
                 fail     : function() { callback(0) }
@@ -3803,7 +3891,7 @@ function PN_API(setup) {
             var msg      = args['message'];
             if (!msg) return error('Missing Message');
 
-            var callback = callback || args['callback'] || msg['callback'] || function(){}
+            var callback = callback || args['callback'] || msg['callback'] || args['success'] || function(){}
             ,   channel  = args['channel'] || msg['channel']
             ,   auth_key = args['auth_key'] || AUTH_KEY
             ,   cipher_key = args['cipher_key']
@@ -3845,7 +3933,6 @@ function PN_API(setup) {
             // Queue Message Send
             PUB_QUEUE[add_msg]({
                 callback : jsonp,
-                timeout  : SECOND * 5,
                 url      : url,
                 data     : _get_url_params(params),
                 fail     : function(response){
@@ -3867,75 +3954,78 @@ function PN_API(setup) {
             PUBNUB.unsubscribe({ channel : 'my_chat' });
         */
         'unsubscribe' : function(args, callback) {
-            var channel       = args['channel']
-            ,   channel_group = args['channel_group']
-            ,   auth_key      = args['auth_key']    || AUTH_KEY
-            ,   callback      = callback            || args['callback'] || function(){}
-            ,   err           = args['error']       || function(){};
+            var channelArg = args['channel'];
+            var channelGroupArg = args['channel_group'];
+            var auth_key = args['auth_key'] || AUTH_KEY;
+            var callback = callback || args['callback'] || function(){};
+            var err = args['error'] || function(){};
 
             TIMETOKEN   = 0;
             SUB_RESTORE = 1;   // REVISIT !!!!
 
-            if (channel) {
+            if (!channelArg && !channelGroupArg) return error('Missing Channel or Channel Group');
+            if (!SUBSCRIBE_KEY) return error('Missing Subscribe Key');
 
-                // Prepare LeaveChannel(s)
-                var leave_c = map( (
-                    channel.join ? channel.join(',') : ''+channel
-                ).split(','), function(channel) {
-                    if (!CHANNELS[channel]) return;
-                    return channel;
-                } ).join(',');
+            if (channelArg) {
+                var channels = isArray(channelArg) ? channelArg : ('' + channelArg).split(",");
+                var existingChannels = [];
+                var presenceChannels = [];
 
-                // Prepare Channel(s)
-                channel = map( (
-                    channel.join ? channel.join(',') : ''+channel
-                ).split(','), function(channel) {
-                    if (!CHANNELS[channel]) return;
-                    return channel + ',' + channel + PRESENCE_SUFFIX;
-                } ).join(',');
+                each(channels, function(channel){
+                    if (CHANNELS[channel]) existingChannels.push(channel);
+                });
 
-                // Iterate over Channels
-                each(channel.split(','), function(ch) {
-                    if (!ch) return;
-                    CHANNELS[ch] = 0;
-                    if (ch in STATE) delete STATE[ch];
-                } );
+                // if we do not have any channels to unsubscribe from, trigger a callback.
+                if (existingChannels.length == 0){
+                    callback({action : "leave"});
+                    return;
+                }
+
+                // Prepare presence channels
+                each(existingChannels, function(channel) {
+                    presenceChannels.push(channel + PRESENCE_SUFFIX);
+                });
+
+                each(existingChannels.concat(presenceChannels), function(channel){
+                    if (channel in CHANNELS) CHANNELS[channel] = 0;
+                    if (channel in STATE) delete STATE[channel];
+                });
 
                 var CB_CALLED = true;
                 if (READY) {
-                    CB_CALLED = SELF['LEAVE'](leave_c, 0 , auth_key, callback, err);
+                    CB_CALLED = SELF['LEAVE'](existingChannels.join(','), 0 , auth_key, callback, err);
                 }
                 if (!CB_CALLED) callback({action : "leave"});
             }
 
-            if (channel_group) {
+            if (channelGroupArg) {
+                var channelGroups = isArray(channelGroupArg) ? channelGroupArg : ('' + channelGroupArg).split(",");
+                var existingChannelGroups = [];
+                var presenceChannelGroups = [];
 
-                // Prepare channel group(s)
-                var leave_gc = map( (
-                    channel_group.join ? channel_group.join(',') : ''+channel_group
-                ).split(','), function(channel_group) {
-                    if (!CHANNEL_GROUPS[channel_group]) return;
-                    return channel_group;
-                } ).join(',');
+                each(channelGroups, function(channelGroup){
+                    if (CHANNEL_GROUPS[channelGroup]) existingChannelGroups.push(channelGroup);
+                });
 
-                // Prepare channel group(s)
-                channel_group = map( (
-                    channel_group.join ? channel_group.join(',') : ''+channel_group
-                ).split(','), function(channel_group) {
-                    if (!CHANNEL_GROUPS[channel_group]) return;
-                    return channel_group + ',' + channel_group + PRESENCE_SUFFIX;
-                } ).join(',');
+                // if we do not have any channel groups to unsubscribe from, trigger a callback.
+                if (existingChannelGroups.length == 0){
+                    callback({action : "leave"});
+                    return;
+                }
 
-                // Iterate over channel groups
-                each( channel_group.split(','), function(chg) {
-                    if (!chg) return;
-                    CHANNEL_GROUPS[chg] = 0;
-                    if (chg in STATE) delete STATE[chg];
-                } );
+                // Prepare presence channels
+                each(existingChannelGroups, function(channelGroup) {
+                    presenceChannelGroups.push(channelGroup + PRESENCE_SUFFIX);
+                });
+
+                each(existingChannelGroups.concat(presenceChannelGroups), function(channelGroup){
+                    if (channelGroup in CHANNEL_GROUPS) CHANNEL_GROUPS[channelGroup] = 0;
+                    if (channelGroup in STATE) delete STATE[channelGroup];
+                });
 
                 var CB_CALLED = true;
                 if (READY) {
-                    CB_CALLED = SELF['LEAVE_GROUP'](leave_gc, 0 , auth_key, callback, err);
+                    CB_CALLED = SELF['LEAVE_GROUP'](existingChannelGroups.join(','), 0 , auth_key, callback, err);
                 }
                 if (!CB_CALLED) callback({action : "leave"});
             }
@@ -4724,7 +4814,7 @@ function PN_API(setup) {
         'isArray'  : function(arg) {
             return isArray(arg);
         },
-        'get_subscibed_channels' : function() {
+        'get_subscribed_channels' : function() {
             return generate_channel_list(CHANNELS, true);
         },
         'presence_heartbeat' : function(args) {
@@ -4751,7 +4841,6 @@ function PN_API(setup) {
             xdr({
                 callback : jsonp,
                 data     : _get_url_params(data),
-                timeout  : SECOND * 5,
                 url      : [
                     STD_ORIGIN, 'v2', 'presence',
                     'sub-key', SUBSCRIBE_KEY,
@@ -4962,7 +5051,7 @@ function crypto_obj() {
 var SWF             = 'https://pubnub.a.ssl.fastly.net/pubnub.swf'
 ,   ASYNC           = 'async'
 ,   UA              = navigator.userAgent
-,   PNSDK           = 'PubNub-JS-' + 'Web' + '/' + '3.7.16'
+,   PNSDK           = 'PubNub-JS-' + 'Web' + '/' + '3.7.23'
 ,   XORIGN          = UA.indexOf('MSIE 6') == -1;
 
 /**
@@ -5284,11 +5373,13 @@ function ajax( setup ) {
                     case 200:
                         break;
                     default:
+                        var responseText = xhr.responseText;
+                        var status = xhr.status;
                         try {
-                            response = JSON['parse'](xhr.responseText);
+                            response = JSON['parse'](responseText);
                             done(1,response);
                         }
-                        catch (r) { return done(1, {status : xhr.status, payload : null, message : xhr.responseText}); }
+                        catch (r) { return done(1, {status : status, payload : null, message : responseText}); }
                         return;
                 }
             }
@@ -5655,7 +5746,7 @@ exports.__esModule = true;
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-var Cache = (function () {
+var Cache = function () {
     function Cache(storage, prefix) {
         _classCallCheck(this, Cache);
 
@@ -5703,7 +5794,7 @@ var Cache = (function () {
     };
 
     return Cache;
-})();
+}();
 
 Cache.defaultPrefix = 'rc-';
 exports.default = Cache;
@@ -5718,7 +5809,7 @@ exports.__esModule = true;
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-var Observable = (function () {
+var Observable = function () {
     function Observable() {
         _classCallCheck(this, Observable);
 
@@ -5792,7 +5883,7 @@ var Observable = (function () {
     };
 
     return Observable;
-})();
+}();
 
 exports.default = Observable;
 
@@ -5810,7 +5901,7 @@ var _Utils = __webpack_require__(3);
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-var Queue = (function () {
+var Queue = function () {
     function Queue(cache, cacheId) {
         _classCallCheck(this, Queue);
 
@@ -5859,7 +5950,7 @@ var Queue = (function () {
     };
 
     return Queue;
-})();
+}();
 
 Queue._pollInterval = 250;
 Queue._releaseTimeout = 5000;
@@ -5889,7 +5980,7 @@ var _ApiResponse2 = _interopRequireDefault(_ApiResponse);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new _Externals.Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { _Externals.Promise.resolve(value).then(function (value) { step("next", value); }, function (err) { step("throw", err); }); } } step("next"); }); }; }
+function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new _Externals.Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { return _Externals.Promise.resolve(value).then(function (value) { return step("next", value); }, function (err) { return step("throw", err); }); } } return step("next"); }); }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
@@ -5897,7 +5988,7 @@ function _possibleConstructorReturn(self, call) { if (!self) { throw new Referen
 
 function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
-var Client = (function (_Observable) {
+var Client = function (_Observable) {
     _inherits(Client, _Observable);
 
     function Client() {
@@ -5921,7 +6012,7 @@ var Client = (function (_Observable) {
      * @return {Promise<ApiResponse>}
      */
 
-    Client.prototype.sendRequest = (function () {
+    Client.prototype.sendRequest = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee(request) {
             var apiResponse;
             return regeneratorRuntime.wrap(function _callee$(_context) {
@@ -5930,6 +6021,7 @@ var Client = (function (_Observable) {
                         case 0:
                             apiResponse = new _ApiResponse2.default(request);
                             _context.prev = 1;
+
 
                             //TODO Stop request if listeners return false
                             this.emit(this.events.beforeRequest, apiResponse);
@@ -5969,6 +6061,7 @@ var Client = (function (_Observable) {
                             _context.prev = 16;
                             _context.t0 = _context['catch'](1);
 
+
                             if (!_context.t0.apiResponse) _context.t0 = this.makeError(_context.t0, apiResponse);
 
                             this.emit(this.events.requestError, _context.t0);
@@ -5983,10 +6076,12 @@ var Client = (function (_Observable) {
             }, _callee, this, [[1, 16]]);
         }));
 
-        return function sendRequest(_x) {
+        function sendRequest(_x) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return sendRequest;
+    }();
 
     /**
      * @param {Request} request
@@ -5994,7 +6089,8 @@ var Client = (function (_Observable) {
      * @private
      */
 
-    Client.prototype._loadResponse = (function () {
+
+    Client.prototype._loadResponse = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee2(request) {
             return regeneratorRuntime.wrap(function _callee2$(_context2) {
                 while (1) {
@@ -6014,10 +6110,12 @@ var Client = (function (_Observable) {
             }, _callee2, this);
         }));
 
-        return function _loadResponse(_x2) {
+        function _loadResponse(_x2) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return _loadResponse;
+    }();
 
     /**
      * Wraps the JS Error object with transaction information
@@ -6025,6 +6123,7 @@ var Client = (function (_Observable) {
      * @param {ApiResponse} apiResponse
      * @return {IApiError}
      */
+
 
     Client.prototype.makeError = function makeError(e, apiResponse) {
 
@@ -6049,6 +6148,7 @@ var Client = (function (_Observable) {
      * @param {object} [init.headers]
      * @return {Request}
      */
+
 
     Client.prototype.createRequest = function createRequest(init) {
 
@@ -6106,7 +6206,7 @@ var Client = (function (_Observable) {
     };
 
     return Client;
-})(_Observable3.default);
+}(_Observable3.default);
 
 /**
  * @name IApiError
@@ -6114,6 +6214,7 @@ var Client = (function (_Observable) {
  * @property {string} originalMessage
  * @property {ApiResponse} apiResponse
  */
+
 
 Client._allowedMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'];
 exports.default = Client;
@@ -6187,7 +6288,7 @@ function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj;
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-var ApiResponse = (function () {
+var ApiResponse = function () {
 
     /**
      * @param {Request} request
@@ -6213,6 +6314,7 @@ var ApiResponse = (function () {
      * @return {Response}
      */
 
+
     ApiResponse.prototype.response = function response() {
         return this._response;
     };
@@ -6220,6 +6322,7 @@ var ApiResponse = (function () {
     /**
      * @return {Request}
      */
+
 
     ApiResponse.prototype.request = function request() {
         return this._request;
@@ -6229,6 +6332,7 @@ var ApiResponse = (function () {
      * @return {boolean}
      */
 
+
     ApiResponse.prototype.ok = function ok() {
         return this._response && this._response.ok;
     };
@@ -6236,6 +6340,7 @@ var ApiResponse = (function () {
     /**
      * @return {string}
      */
+
 
     ApiResponse.prototype.text = function text() {
         if (!this._isJson() && !this._isMultipart()) throw new Error('Response is not text');
@@ -6245,6 +6350,7 @@ var ApiResponse = (function () {
     /**
      * @return {object}
      */
+
 
     ApiResponse.prototype.json = function json() {
         if (!this._isJson()) throw new Error('Response is not JSON');
@@ -6258,6 +6364,7 @@ var ApiResponse = (function () {
      * @param [skipOKCheck]
      * @return {string}
      */
+
 
     ApiResponse.prototype.error = function error(skipOKCheck) {
 
@@ -6278,6 +6385,7 @@ var ApiResponse = (function () {
     /**
      * @return {ApiResponse[]}
      */
+
 
     ApiResponse.prototype.multipart = function multipart() {
 
@@ -6347,6 +6455,7 @@ var ApiResponse = (function () {
      * @return {ApiResponse}
      */
 
+
     ApiResponse.create = function create(text, status, statusText) {
 
         text = text || '';
@@ -6378,7 +6487,7 @@ var ApiResponse = (function () {
     };
 
     return ApiResponse;
-})();
+}();
 
 ApiResponse._contentType = 'Content-Type';
 ApiResponse._jsonContentType = 'application/json';
@@ -6407,7 +6516,7 @@ var _Client2 = _interopRequireDefault(_Client);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { Promise.resolve(value).then(function (value) { step("next", value); }, function (err) { step("throw", err); }); } } step("next"); }); }; }
+function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { return Promise.resolve(value).then(function (value) { return step("next", value); }, function (err) { return step("throw", err); }); } } return step("next"); }); }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
@@ -6415,7 +6524,7 @@ function _possibleConstructorReturn(self, call) { if (!self) { throw new Referen
 
 function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
-var Client = (function (_HttpClient) {
+var Client = function (_HttpClient) {
     _inherits(Client, _HttpClient);
 
     function Client() {
@@ -6431,7 +6540,7 @@ var Client = (function (_HttpClient) {
         return this._registry;
     };
 
-    Client.prototype._loadResponse = (function () {
+    Client.prototype._loadResponse = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee(request) {
             var mock;
             return regeneratorRuntime.wrap(function _callee$(_context) {
@@ -6453,13 +6562,15 @@ var Client = (function (_HttpClient) {
             }, _callee, this);
         }));
 
-        return function _loadResponse(_x) {
+        function _loadResponse(_x) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return _loadResponse;
+    }();
 
     return Client;
-})(_Client2.default);
+}(_Client2.default);
 
 exports.default = Client;
 
@@ -6479,7 +6590,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-var Registry = (function () {
+var Registry = function () {
     function Registry() {
         _classCallCheck(this, Registry);
 
@@ -6636,7 +6747,7 @@ var Registry = (function () {
     };
 
     return Registry;
-})();
+}();
 
 exports.default = Registry;
 
@@ -6658,11 +6769,11 @@ var _Utils2 = __webpack_require__(16);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { Promise.resolve(value).then(function (value) { step("next", value); }, function (err) { step("throw", err); }); } } step("next"); }); }; }
+function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { return Promise.resolve(value).then(function (value) { return step("next", value); }, function (err) { return step("throw", err); }); } } return step("next"); }); }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-var Mock = (function () {
+var Mock = function () {
     function Mock(method, path, json, status, statusText, delay) {
         _classCallCheck(this, Mock);
 
@@ -6687,7 +6798,7 @@ var Mock = (function () {
         return request.url.indexOf(this._path) > -1 && request.method.toUpperCase() == this._method;
     };
 
-    Mock.prototype.getResponse = (function () {
+    Mock.prototype.getResponse = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee(request) {
             return regeneratorRuntime.wrap(function _callee$(_context) {
                 while (1) {
@@ -6707,10 +6818,12 @@ var Mock = (function () {
             }, _callee, this);
         }));
 
-        return function getResponse(_x) {
+        function getResponse(_x) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return getResponse;
+    }();
 
     Mock.prototype.createResponse = function createResponse(json, init) {
 
@@ -6728,7 +6841,7 @@ var Mock = (function () {
     };
 
     return Mock;
-})();
+}();
 
 exports.default = Mock;
 
@@ -6758,7 +6871,7 @@ var _Utils = __webpack_require__(3);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new _Externals.Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { _Externals.Promise.resolve(value).then(function (value) { step("next", value); }, function (err) { step("throw", err); }); } } step("next"); }); }; }
+function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new _Externals.Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { return _Externals.Promise.resolve(value).then(function (value) { return step("next", value); }, function (err) { return step("throw", err); }); } } return step("next"); }); }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
@@ -6766,7 +6879,7 @@ function _possibleConstructorReturn(self, call) { if (!self) { throw new Referen
 
 function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
-var Platform = (function (_Observable) {
+var Platform = function (_Observable) {
     _inherits(Platform, _Observable);
 
     // 10 hours
@@ -6787,6 +6900,7 @@ var Platform = (function (_Observable) {
             logoutSuccess: 'logoutSuccess',
             logoutError: 'logoutError'
         };
+
 
         _this._server = server;
         _this._appKey = appKey;
@@ -6813,6 +6927,7 @@ var Platform = (function (_Observable) {
     // 1 week
     // Platform server by default sets it to 60 * 60 = 1 hour
 
+
     Platform.prototype.auth = function auth() {
         return this._auth;
     };
@@ -6820,6 +6935,7 @@ var Platform = (function (_Observable) {
     /**
      * @return {Client}
      */
+
 
     Platform.prototype.client = function client() {
         return this._client;
@@ -6833,6 +6949,7 @@ var Platform = (function (_Observable) {
      * @param {boolean} [options.addToken]
      * @return {string}
      */
+
 
     Platform.prototype.createUrl = function createUrl(path, options) {
 
@@ -6865,6 +6982,7 @@ var Platform = (function (_Observable) {
      * @return {string}
      */
 
+
     Platform.prototype.authUrl = function authUrl(options) {
 
         options = options || {};
@@ -6885,6 +7003,7 @@ var Platform = (function (_Observable) {
      * @return {Object}
      */
 
+
     Platform.prototype.parseAuthRedirectUrl = function parseAuthRedirectUrl(url) {
 
         var qs = (0, _Utils.parseQueryString)(url.split('?').reverse()[0]),
@@ -6903,7 +7022,8 @@ var Platform = (function (_Observable) {
      * @return {Promise<boolean>}
      */
 
-    Platform.prototype.loggedIn = (function () {
+
+    Platform.prototype.loggedIn = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
             return regeneratorRuntime.wrap(function _callee$(_context) {
                 while (1) {
@@ -6929,10 +7049,12 @@ var Platform = (function (_Observable) {
             }, _callee, this, [[0, 6]]);
         }));
 
-        return function loggedIn() {
+        function loggedIn() {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return loggedIn;
+    }();
 
     /**
      * @param {string} options.username
@@ -6944,7 +7066,8 @@ var Platform = (function (_Observable) {
      * @returns {Promise<ApiResponse>}
      */
 
-    Platform.prototype.login = (function () {
+
+    Platform.prototype.login = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee2(options) {
             var body, apiResponse, json;
             return regeneratorRuntime.wrap(function _callee2$(_context2) {
@@ -6952,6 +7075,7 @@ var Platform = (function (_Observable) {
                     switch (_context2.prev = _context2.next) {
                         case 0:
                             _context2.prev = 0;
+
 
                             options = options || {};
 
@@ -6963,6 +7087,7 @@ var Platform = (function (_Observable) {
                                 "access_token_ttl": Platform._accessTokenTtl,
                                 "refresh_token_ttl": options.remember ? Platform._refreshTokenTtlRemember : Platform._refreshTokenTtl
                             };
+
 
                             if (!options.code) {
 
@@ -6987,6 +7112,7 @@ var Platform = (function (_Observable) {
                             apiResponse = _context2.sent;
                             json = apiResponse.json();
 
+
                             this._auth.setData(json).setRemember(options.remember);
 
                             this.emit(this.events.loginSuccess, apiResponse);
@@ -6996,6 +7122,7 @@ var Platform = (function (_Observable) {
                         case 16:
                             _context2.prev = 16;
                             _context2.t0 = _context2["catch"](0);
+
 
                             this._cache.clean();
 
@@ -7011,16 +7138,19 @@ var Platform = (function (_Observable) {
             }, _callee2, this, [[0, 16]]);
         }));
 
-        return function login(_x) {
+        function login(_x) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return login;
+    }();
 
     /**
      * @returns {Promise<ApiResponse>}
      */
 
-    Platform.prototype.refresh = (function () {
+
+    Platform.prototype.refresh = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee3() {
             var res, json;
             return regeneratorRuntime.wrap(function _callee3$(_context3) {
@@ -7029,53 +7159,54 @@ var Platform = (function (_Observable) {
                         case 0:
                             _context3.prev = 0;
 
-                            this.emit(this.events.beforeRefresh);
-
                             if (!this._queue.isPaused()) {
-                                _context3.next = 9;
+                                _context3.next = 8;
                                 break;
                             }
 
-                            _context3.next = 5;
+                            _context3.next = 4;
                             return this._queue.poll();
 
-                        case 5:
+                        case 4:
                             if (this._isAccessTokenValid()) {
-                                _context3.next = 7;
+                                _context3.next = 6;
                                 break;
                             }
 
                             throw new Error('Automatic authentification timeout');
 
-                        case 7:
+                        case 6:
 
                             this.emit(this.events.refreshSuccess, null);
 
                             return _context3.abrupt("return", null);
 
-                        case 9:
+                        case 8:
 
-                            this._queue.pause();
+                            this.emit(this.events.beforeRefresh);
 
-                            // Make sure all existing AJAX calls had a chance to reach the server
-                            _context3.next = 12;
-                            return (0, _Utils.delay)(Platform._refreshDelayMs);
-
-                        case 12:
                             if (this._auth.refreshToken()) {
-                                _context3.next = 14;
+                                _context3.next = 11;
                                 break;
                             }
 
                             throw new Error('Refresh token is missing');
 
-                        case 14:
+                        case 11:
                             if (this._auth.refreshTokenValid()) {
-                                _context3.next = 16;
+                                _context3.next = 13;
                                 break;
                             }
 
                             throw new Error('Refresh token has expired');
+
+                        case 13:
+
+                            this._queue.pause();
+
+                            // Make sure all existing AJAX calls had a chance to reach the server
+                            _context3.next = 16;
+                            return (0, _Utils.delay)(Platform._refreshDelayMs);
 
                         case 16:
                             if (this._queue.isPaused()) {
@@ -7118,6 +7249,7 @@ var Platform = (function (_Observable) {
                             _context3.prev = 30;
                             _context3.t0 = _context3["catch"](0);
 
+
                             _context3.t0 = this._client.makeError(_context3.t0);
 
                             if (Platform._clearCacheOnRefreshError) {
@@ -7136,16 +7268,19 @@ var Platform = (function (_Observable) {
             }, _callee3, this, [[0, 30]]);
         }));
 
-        return function refresh() {
+        function refresh() {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return refresh;
+    }();
 
     /**
      * @returns {Promise<ApiResponse>}
      */
 
-    Platform.prototype.logout = (function () {
+
+    Platform.prototype.logout = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee4() {
             var res;
             return regeneratorRuntime.wrap(function _callee4$(_context4) {
@@ -7153,6 +7288,7 @@ var Platform = (function (_Observable) {
                     switch (_context4.prev = _context4.next) {
                         case 0:
                             _context4.prev = 0;
+
 
                             this.emit(this.events.beforeLogout);
 
@@ -7166,6 +7302,7 @@ var Platform = (function (_Observable) {
                         case 5:
                             res = _context4.sent;
 
+
                             this._queue.resume();
                             this._cache.clean();
 
@@ -7176,6 +7313,7 @@ var Platform = (function (_Observable) {
                         case 12:
                             _context4.prev = 12;
                             _context4.t0 = _context4["catch"](0);
+
 
                             this._queue.resume();
 
@@ -7191,10 +7329,12 @@ var Platform = (function (_Observable) {
             }, _callee4, this, [[0, 12]]);
         }));
 
-        return function logout() {
+        function logout() {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return logout;
+    }();
 
     /**
      * @param {Request} request
@@ -7203,7 +7343,8 @@ var Platform = (function (_Observable) {
      * @return {Promise<Request>}
      */
 
-    Platform.prototype.inflateRequest = (function () {
+
+    Platform.prototype.inflateRequest = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee5(request, options) {
             return regeneratorRuntime.wrap(function _callee5$(_context5) {
                 while (1) {
@@ -7240,10 +7381,12 @@ var Platform = (function (_Observable) {
             }, _callee5, this);
         }));
 
-        return function inflateRequest(_x2, _x3) {
+        function inflateRequest(_x2, _x3) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return inflateRequest;
+    }();
 
     /**
      * @param {Request} request
@@ -7252,7 +7395,8 @@ var Platform = (function (_Observable) {
      * @return {Promise<ApiResponse>}
      */
 
-    Platform.prototype.sendRequest = (function () {
+
+    Platform.prototype.sendRequest = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee6(request, options) {
             return regeneratorRuntime.wrap(function _callee6$(_context6) {
                 while (1) {
@@ -7299,10 +7443,12 @@ var Platform = (function (_Observable) {
             }, _callee6, this, [[0, 9]]);
         }));
 
-        return function sendRequest(_x4, _x5) {
+        function sendRequest(_x4, _x5) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return sendRequest;
+    }();
 
     /**
      * General purpose function to send anything to server
@@ -7315,7 +7461,8 @@ var Platform = (function (_Observable) {
      * @return {Promise<ApiResponse>}
      */
 
-    Platform.prototype.send = (function () {
+
+    Platform.prototype.send = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee7() {
             var options = arguments.length <= 0 || arguments[0] === undefined ? {} : arguments[0];
             return regeneratorRuntime.wrap(function _callee7$(_context7) {
@@ -7340,10 +7487,12 @@ var Platform = (function (_Observable) {
             }, _callee7, this);
         }));
 
-        return function send(_x6) {
+        function send(_x6) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return send;
+    }();
 
     /**
      * @param {string} url
@@ -7354,7 +7503,8 @@ var Platform = (function (_Observable) {
      * @return {Promise<ApiResponse>}
      */
 
-    Platform.prototype.get = (function () {
+
+    Platform.prototype.get = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee8(url, query, options) {
             return regeneratorRuntime.wrap(function _callee8$(_context8) {
                 while (1) {
@@ -7378,10 +7528,12 @@ var Platform = (function (_Observable) {
             }, _callee8, this);
         }));
 
-        return function get(_x8, _x9, _x10) {
+        function get(_x8, _x9, _x10) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return get;
+    }();
 
     /**
      * @param {string} url
@@ -7393,7 +7545,8 @@ var Platform = (function (_Observable) {
      * @return {Promise<ApiResponse>}
      */
 
-    Platform.prototype.post = (function () {
+
+    Platform.prototype.post = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee9(url, body, query, options) {
             return regeneratorRuntime.wrap(function _callee9$(_context9) {
                 while (1) {
@@ -7418,10 +7571,12 @@ var Platform = (function (_Observable) {
             }, _callee9, this);
         }));
 
-        return function post(_x11, _x12, _x13, _x14) {
+        function post(_x11, _x12, _x13, _x14) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return post;
+    }();
 
     /**
      * @param {string} url
@@ -7433,7 +7588,8 @@ var Platform = (function (_Observable) {
      * @return {Promise<ApiResponse>}
      */
 
-    Platform.prototype.put = (function () {
+
+    Platform.prototype.put = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee10(url, body, query, options) {
             return regeneratorRuntime.wrap(function _callee10$(_context10) {
                 while (1) {
@@ -7458,10 +7614,12 @@ var Platform = (function (_Observable) {
             }, _callee10, this);
         }));
 
-        return function put(_x15, _x16, _x17, _x18) {
+        function put(_x15, _x16, _x17, _x18) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return put;
+    }();
 
     /**
      * @param {string} url
@@ -7472,7 +7630,8 @@ var Platform = (function (_Observable) {
      * @return {Promise<ApiResponse>}
      */
 
-    Platform.prototype['delete'] = (function () {
+
+    Platform.prototype['delete'] = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee11(url, query, options) {
             return regeneratorRuntime.wrap(function _callee11$(_context11) {
                 while (1) {
@@ -7496,12 +7655,14 @@ var Platform = (function (_Observable) {
             }, _callee11, this);
         }));
 
-        return function _delete(_x19, _x20, _x21) {
+        function _delete(_x19, _x20, _x21) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
 
-    Platform.prototype._tokenRequest = (function () {
+        return _delete;
+    }();
+
+    Platform.prototype._tokenRequest = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee12(path, body) {
             return regeneratorRuntime.wrap(function _callee12$(_context12) {
                 while (1) {
@@ -7530,12 +7691,14 @@ var Platform = (function (_Observable) {
             }, _callee12, this);
         }));
 
-        return function _tokenRequest(_x22, _x23) {
+        function _tokenRequest(_x22, _x23) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
 
-    Platform.prototype._ensureAuthentication = (function () {
+        return _tokenRequest;
+    }();
+
+    Platform.prototype._ensureAuthentication = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee13() {
             return regeneratorRuntime.wrap(function _callee13$(_context13) {
                 while (1) {
@@ -7563,10 +7726,12 @@ var Platform = (function (_Observable) {
             }, _callee13, this);
         }));
 
-        return function _ensureAuthentication() {
+        function _ensureAuthentication() {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return _ensureAuthentication;
+    }();
 
     Platform.prototype._isAccessTokenValid = function _isAccessTokenValid() {
 
@@ -7584,7 +7749,7 @@ var Platform = (function (_Observable) {
     };
 
     return Platform;
-})(_Observable3.default);
+}(_Observable3.default);
 
 Platform._urlPrefix = '/restapi';
 Platform._apiVersion = 'v1.0';
@@ -7609,7 +7774,7 @@ exports.__esModule = true;
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-var Auth = (function () {
+var Auth = function () {
     function Auth(cache, cacheId) {
         _classCallCheck(this, Auth);
 
@@ -7617,6 +7782,7 @@ var Auth = (function () {
         this._cache = cache;
         this._cacheId = cacheId;
     } // 1 minute
+
 
     Auth.prototype.accessToken = function accessToken() {
         return this.data().access_token;
@@ -7634,6 +7800,7 @@ var Auth = (function () {
      * @return {{token_type: string, access_token: string, expires_in: number, refresh_token: string, refresh_token_expires_in: number}}
      */
 
+
     Auth.prototype.data = function data() {
 
         return this._cache.getItem(this._cacheId) || {
@@ -7649,6 +7816,7 @@ var Auth = (function () {
      * @param {object} newData
      * @return {Auth}
      */
+
 
     Auth.prototype.setData = function setData(newData) {
 
@@ -7673,6 +7841,7 @@ var Auth = (function () {
      * @return {boolean}
      */
 
+
     Auth.prototype.accessTokenValid = function accessTokenValid() {
 
         var authData = this.data();
@@ -7684,6 +7853,7 @@ var Auth = (function () {
      * @return {boolean}
      */
 
+
     Auth.prototype.refreshTokenValid = function refreshTokenValid() {
 
         return this.data().refresh_token_expire_time > Date.now();
@@ -7692,6 +7862,7 @@ var Auth = (function () {
     /**
      * @return {Auth}
      */
+
 
     Auth.prototype.cancelAccessToken = function cancelAccessToken() {
 
@@ -7705,6 +7876,7 @@ var Auth = (function () {
      * This method sets a special authentication mode used in Service Web
      * @return {Auth}
      */
+
 
     Auth.prototype.forceAuthentication = function forceAuthentication() {
 
@@ -7724,6 +7896,7 @@ var Auth = (function () {
      * @return {Auth}
      */
 
+
     Auth.prototype.setRemember = function setRemember(remember) {
 
         return this.setData({ remember: remember });
@@ -7733,13 +7906,14 @@ var Auth = (function () {
      * @return {boolean}
      */
 
+
     Auth.prototype.remember = function remember() {
 
         return !!this.data().remember;
     };
 
     return Auth;
-})();
+}();
 
 //export interface IAuthData {
 //    remember?:boolean;
@@ -7752,6 +7926,7 @@ var Auth = (function () {
 //    refresh_token_expire_time?:number;
 //    scope?:string;
 //}
+
 
 Auth.refreshHandicapMs = 60 * 1000;
 Auth.forcedTokenType = 'forced';
@@ -7775,7 +7950,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-var PubnubMockFactory = (function () {
+var PubnubMockFactory = function () {
     function PubnubMockFactory() {
         _classCallCheck(this, PubnubMockFactory);
 
@@ -7787,7 +7962,7 @@ var PubnubMockFactory = (function () {
     };
 
     return PubnubMockFactory;
-})();
+}();
 
 exports.default = PubnubMockFactory;
 
@@ -7813,7 +7988,7 @@ function _possibleConstructorReturn(self, call) { if (!self) { throw new Referen
 
 function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
-var PubnubMock = (function (_Observable) {
+var PubnubMock = function (_Observable) {
     _inherits(PubnubMock, _Observable);
 
     function PubnubMock(options) {
@@ -7841,7 +8016,7 @@ var PubnubMock = (function (_Observable) {
     };
 
     return PubnubMock;
-})(_Observable3.default);
+}(_Observable3.default);
 
 exports.default = PubnubMock;
 
@@ -7865,7 +8040,7 @@ var _Utils = __webpack_require__(3);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { Promise.resolve(value).then(function (value) { step("next", value); }, function (err) { step("throw", err); }); } } step("next"); }); }; }
+function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { return Promise.resolve(value).then(function (value) { return step("next", value); }, function (err) { return step("throw", err); }); } } return step("next"); }); }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
@@ -7873,7 +8048,7 @@ function _possibleConstructorReturn(self, call) { if (!self) { throw new Referen
 
 function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
-var Subscription = (function (_Observable) {
+var Subscription = function (_Observable) {
     _inherits(Subscription, _Observable);
 
     function Subscription(pubnubFactory, platform) {
@@ -7890,6 +8065,7 @@ var Subscription = (function (_Observable) {
             subscribeSuccess: 'subscribeSuccess',
             subscribeError: 'subscribeError'
         };
+
 
         _this._pubnubFactory = pubnubFactory;
         _this._platform = platform;
@@ -7908,6 +8084,7 @@ var Subscription = (function (_Observable) {
     /**
      * @return {boolean}
      */
+
 
     Subscription.prototype.alive = function alive() {
         return this.subscribed() && Date.now() < this.expirationTime();
@@ -7941,7 +8118,8 @@ var Subscription = (function (_Observable) {
      * @returns {Promise<ApiResponse>}
      */
 
-    Subscription.prototype.register = (function () {
+
+    Subscription.prototype.register = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
             return regeneratorRuntime.wrap(function _callee$(_context) {
                 while (1) {
@@ -7973,10 +8151,12 @@ var Subscription = (function (_Observable) {
             }, _callee, this);
         }));
 
-        return function register() {
+        function register() {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return register;
+    }();
 
     Subscription.prototype.eventFilters = function eventFilters() {
         return this._subscription.eventFilters || [];
@@ -7986,6 +8166,7 @@ var Subscription = (function (_Observable) {
      * @param {string[]} events
      * @return {Subscription}
      */
+
 
     Subscription.prototype.addEventFilters = function addEventFilters(events) {
         this.setEventFilters(this.eventFilters().concat(events));
@@ -7997,6 +8178,7 @@ var Subscription = (function (_Observable) {
      * @return {Subscription}
      */
 
+
     Subscription.prototype.setEventFilters = function setEventFilters(events) {
         this._subscription.eventFilters = events;
         return this;
@@ -8006,7 +8188,8 @@ var Subscription = (function (_Observable) {
      * @returns {Promise<ApiResponse>}
      */
 
-    Subscription.prototype.subscribe = (function () {
+
+    Subscription.prototype.subscribe = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee2() {
             var response, json;
             return regeneratorRuntime.wrap(function _callee2$(_context2) {
@@ -8014,6 +8197,7 @@ var Subscription = (function (_Observable) {
                     switch (_context2.prev = _context2.next) {
                         case 0:
                             _context2.prev = 0;
+
 
                             this._clearTimeout();
 
@@ -8037,6 +8221,7 @@ var Subscription = (function (_Observable) {
                             response = _context2.sent;
                             json = response.json();
 
+
                             this.setSubscription(json).emit(this.events.subscribeSuccess, response);
 
                             return _context2.abrupt('return', response);
@@ -8044,6 +8229,7 @@ var Subscription = (function (_Observable) {
                         case 12:
                             _context2.prev = 12;
                             _context2.t0 = _context2['catch'](0);
+
 
                             _context2.t0 = this._platform.client().makeError(_context2.t0);
 
@@ -8059,16 +8245,19 @@ var Subscription = (function (_Observable) {
             }, _callee2, this, [[0, 12]]);
         }));
 
-        return function subscribe() {
+        function subscribe() {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return subscribe;
+    }();
 
     /**
      * @returns {Promise<ApiResponse>}
      */
 
-    Subscription.prototype.renew = (function () {
+
+    Subscription.prototype.renew = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee3() {
             var response, json;
             return regeneratorRuntime.wrap(function _callee3$(_context3) {
@@ -8076,6 +8265,7 @@ var Subscription = (function (_Observable) {
                     switch (_context3.prev = _context3.next) {
                         case 0:
                             _context3.prev = 0;
+
 
                             this._clearTimeout();
 
@@ -8104,6 +8294,7 @@ var Subscription = (function (_Observable) {
                             response = _context3.sent;
                             json = response.json();
 
+
                             this.setSubscription(json).emit(this.events.renewSuccess, response);
 
                             return _context3.abrupt('return', response);
@@ -8111,6 +8302,7 @@ var Subscription = (function (_Observable) {
                         case 14:
                             _context3.prev = 14;
                             _context3.t0 = _context3['catch'](0);
+
 
                             _context3.t0 = this._platform.client().makeError(_context3.t0);
 
@@ -8126,16 +8318,19 @@ var Subscription = (function (_Observable) {
             }, _callee3, this, [[0, 14]]);
         }));
 
-        return function renew() {
+        function renew() {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return renew;
+    }();
 
     /**
      * @returns {Promise<ApiResponse>}
      */
 
-    Subscription.prototype.remove = (function () {
+
+    Subscription.prototype.remove = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee4() {
             var response;
             return regeneratorRuntime.wrap(function _callee4$(_context4) {
@@ -8158,6 +8353,7 @@ var Subscription = (function (_Observable) {
                         case 5:
                             response = _context4.sent;
 
+
                             this.reset().emit(this.events.removeSuccess, response);
 
                             return _context4.abrupt('return', response);
@@ -8165,6 +8361,7 @@ var Subscription = (function (_Observable) {
                         case 10:
                             _context4.prev = 10;
                             _context4.t0 = _context4['catch'](0);
+
 
                             _context4.t0 = this._platform.client().makeError(_context4.t0);
 
@@ -8180,14 +8377,17 @@ var Subscription = (function (_Observable) {
             }, _callee4, this, [[0, 10]]);
         }));
 
-        return function remove() {
+        function remove() {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return remove;
+    }();
 
     /**
      * @returns {Promise<ApiResponse>}
      */
+
 
     Subscription.prototype.resubscribe = function resubscribe() {
 
@@ -8198,6 +8398,7 @@ var Subscription = (function (_Observable) {
      * Remove subscription and disconnect from PUBNUB
      * This method resets subscription at client side but backend is not notified
      */
+
 
     Subscription.prototype.reset = function reset() {
         this._clearTimeout();
@@ -8287,7 +8488,7 @@ var Subscription = (function (_Observable) {
     };
 
     return Subscription;
-})(_Observable3.default);
+}(_Observable3.default);
 
 //export interface ISubscription {
 //    id?:string;
@@ -8307,6 +8508,7 @@ var Subscription = (function (_Observable) {
 //    status?:string; // Active
 //}
 
+
 Subscription._renewHandicapMs = 2 * 60 * 1000;
 Subscription._pollInterval = 10 * 1000;
 exports.default = Subscription;
@@ -8317,9 +8519,9 @@ exports.default = Subscription;
 
 'use strict';
 
-var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
-
 exports.__esModule = true;
+
+var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
 var _Subscription2 = __webpack_require__(25);
 
@@ -8331,7 +8533,7 @@ var _Queue2 = _interopRequireDefault(_Queue);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
-function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { Promise.resolve(value).then(function (value) { step("next", value); }, function (err) { step("throw", err); }); } } step("next"); }); }; }
+function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, arguments); return new Promise(function (resolve, reject) { function step(key, arg) { try { var info = gen[key](arg); var value = info.value; } catch (error) { reject(error); return; } if (info.done) { resolve(value); } else { return Promise.resolve(value).then(function (value) { return step("next", value); }, function (err) { return step("throw", err); }); } } return step("next"); }); }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
@@ -8339,7 +8541,7 @@ function _possibleConstructorReturn(self, call) { if (!self) { throw new Referen
 
 function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
-var CachedSubscription = (function (_Subscription) {
+var CachedSubscription = function (_Subscription) {
     _inherits(CachedSubscription, _Subscription);
 
     function CachedSubscription(pubnubFactory, platform, cache, cacheKey) {
@@ -8385,7 +8587,8 @@ var CachedSubscription = (function (_Subscription) {
      * @private
      */
 
-    CachedSubscription.prototype._queue = (function () {
+
+    CachedSubscription.prototype._queue = function () {
         var ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee(actionCb, queue, successEvent, errorEvent, errorMessage) {
             var res;
             return regeneratorRuntime.wrap(function _callee$(_context) {
@@ -8426,6 +8629,7 @@ var CachedSubscription = (function (_Subscription) {
                         case 11:
                             res = _context.sent;
 
+
                             queue.resume();
 
                             this.emit(successEvent, res);
@@ -8435,6 +8639,7 @@ var CachedSubscription = (function (_Subscription) {
                         case 17:
                             _context.prev = 17;
                             _context.t0 = _context['catch'](0);
+
 
                             this.emit(errorEvent, _context.t0);
 
@@ -8448,14 +8653,17 @@ var CachedSubscription = (function (_Subscription) {
             }, _callee, this, [[0, 17]]);
         }));
 
-        return function _queue(_x, _x2, _x3, _x4, _x5) {
+        function _queue(_x, _x2, _x3, _x4, _x5) {
             return ref.apply(this, arguments);
-        };
-    })();
+        }
+
+        return _queue;
+    }();
 
     /**
      * @returns {Promise<ApiResponse>}
      */
+
 
     CachedSubscription.prototype.renew = function renew() {
 
@@ -8466,6 +8674,7 @@ var CachedSubscription = (function (_Subscription) {
      * @returns {Promise<ApiResponse>}
      */
 
+
     CachedSubscription.prototype.resubscribe = function resubscribe() {
 
         return this._queue(_Subscription.prototype.resubscribe, this._resubscribeQueue, this.events.queuedResubscribeSuccess, this.events.queuedResubscribeError, 'Subscription is not alive after resubscribe timeout');
@@ -8475,6 +8684,7 @@ var CachedSubscription = (function (_Subscription) {
      * @param {string[]} events
      * @return {CachedSubscription}
      */
+
 
     CachedSubscription.prototype.restore = function restore(events) {
 
@@ -8492,7 +8702,7 @@ var CachedSubscription = (function (_Subscription) {
     };
 
     return CachedSubscription;
-})(_Subscription3.default);
+}(_Subscription3.default);
 
 exports.default = CachedSubscription;
 
