@@ -1680,7 +1680,8 @@ var Client = function (_EventEmitter) {
         // Sanity checks
         if (!init.url) throw new Error('Url is not defined');
         if (!init.method) init.method = 'GET';
-        if (init.method && Client._allowedMethods.indexOf(init.method.toUpperCase()) < 0) {
+        init.method = init.method.toUpperCase();
+        if (init.method && Client._allowedMethods.indexOf(init.method) < 0) {
             throw new Error('Method has wrong value: ' + init.method);
         }
 
@@ -1711,7 +1712,12 @@ var Client = function (_EventEmitter) {
 
             // Assign a new encoded body
             if (contentType.indexOf(_ApiResponse2.default._jsonContentType) > -1) {
-                init.body = JSON.stringify(init.body);
+                if ((init.method === 'GET' || init.method === 'HEAD') && !!init.body) {
+                    // oddly setting body to null still result in TypeError in phantomjs
+                    init.body = undefined;
+                } else {
+                    init.body = JSON.stringify(init.body);
+                }
             } else if (contentType.indexOf(_ApiResponse2.default._urlencodedContentType) > -1) {
                 init.body = (0, _Utils.queryStringify)(init.body);
             }
