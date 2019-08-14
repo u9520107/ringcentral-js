@@ -86,6 +86,9 @@ function Platform(options) {
     this._refreshPromise = null;
 
     /** @private */
+    this._authProxy = !!options.authProxy;
+
+    /** @private */
     this._auth = new Auth({
         cache: this._cache,
         cacheId: Platform._cacheId,
@@ -303,13 +306,16 @@ Platform.prototype.loginWindow = function(options) {
  * @return {Promise<boolean>}
  */
 Platform.prototype.loggedIn = function() {
-
-    return this.ensureLoggedIn().then(function() {
+    return Promise.resolve().then(function () {
+        if (this.authProxy) {
+            return this.get('/restapi/v1.0/client-info');
+        }
+        return this.ensureLoggedIn();
+    }.bind(this)).then(function () {
         return true;
-    }).catch(function() {
+    }).catch(function () {
         return false;
     });
-
 };
 
 /**
@@ -443,7 +449,9 @@ Platform.prototype._refresh = function() {
  * @returns {Promise<ApiResponse>}
  */
 Platform.prototype.refresh = function() {
-
+    if (this._authProxy) {
+        throw new Error('Refresh is not supported in Auth Proxy mode');
+    }
     if (!this._refreshPromise) {
 
         this._refreshPromise = this._refresh()
@@ -466,7 +474,9 @@ Platform.prototype.refresh = function() {
  * @returns {Promise<ApiResponse>}
  */
 Platform.prototype.logout = function() {
-
+    if (this._authProxy) {
+        throw new Error('Logout is not supported in Auth Proxy mode');
+    }
     return (new this._externals.Promise(function(resolve) {
 
         this.emit(this.events.beforeLogout);
@@ -509,7 +519,9 @@ Platform.prototype.inflateRequest = function(request, options) {
 
         request.headers.set('X-User-Agent', this._userAgent);
         request.headers.set('Client-Id', this._appKey);
-        request.headers.set('Authorization', this._authHeader());
+        if (!this._authProxy) {
+            request.headers.set('Authorization', this._authHeader());
+        }
         //request.url = this.createUrl(request.url, {addServer: true}); //FIXME Spec prevents this...
 
         return request;
@@ -542,8 +554,12 @@ Platform.prototype.sendRequest = function(request, options) {
         var response = e.apiResponse.response();
         var status = response.status;
 
-        if ((status != ApiResponse._unauthorizedStatus) &&
-            (status != ApiResponse._rateLimitStatus)) throw e;
+        if (((status != ApiResponse._unauthorizedStatus) &&
+                (status != ApiResponse._rateLimitStatus)
+            ) || this._authProxy
+        ) {
+            throw e;
+        }
 
         options.retry = true;
 
@@ -653,6 +669,9 @@ Platform.prototype['delete'] = function(url, query, options) {
 };
 
 Platform.prototype.ensureLoggedIn = function() {
+    if (this._authProxy) {
+        return null;
+    }
     if (this._isAccessTokenValid()) return this._externals.Promise.resolve();
     return this.refresh();
 };

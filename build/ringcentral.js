@@ -1525,6 +1525,9 @@ function Platform(options) {
     this._refreshPromise = null;
 
     /** @private */
+    this._authProxy = !!options.authProxy;
+
+    /** @private */
     this._auth = new Auth({
         cache: this._cache,
         cacheId: Platform._cacheId,
@@ -1742,13 +1745,16 @@ Platform.prototype.loginWindow = function(options) {
  * @return {Promise<boolean>}
  */
 Platform.prototype.loggedIn = function() {
-
-    return this.ensureLoggedIn().then(function() {
+    return Promise.resolve().then(function () {
+        if (this.authProxy) {
+            return this.get('/restapi/v1.0/client-info');
+        }
+        return this.ensureLoggedIn();
+    }.bind(this)).then(function () {
         return true;
-    }).catch(function() {
+    }).catch(function () {
         return false;
     });
-
 };
 
 /**
@@ -1797,8 +1803,8 @@ Platform.prototype.login = function(options) {
         }
 
         if (options.endpointId) body.endpoint_id = options.endpointId;
-        if (options.accessTokenTtl) body.accessTokenTtl = options.accessTokenTtl;
-        if (options.refreshTokenTtl) body.refreshTokenTtl = options.refreshTokenTtl;
+        if (options.accessTokenTtl) body.access_token_ttl = options.accessTokenTtl;
+        if (options.refreshTokenTtl) body.refresh_token_ttl = options.refreshTokenTtl;
 
         resolve(this._tokenRequest(Platform._tokenEndpoint, body));
 
@@ -1882,7 +1888,9 @@ Platform.prototype._refresh = function() {
  * @returns {Promise<ApiResponse>}
  */
 Platform.prototype.refresh = function() {
-
+    if (this._authProxy) {
+        throw new Error('Refresh is not supported in Auth Proxy mode');
+    }
     if (!this._refreshPromise) {
 
         this._refreshPromise = this._refresh()
@@ -1905,7 +1913,9 @@ Platform.prototype.refresh = function() {
  * @returns {Promise<ApiResponse>}
  */
 Platform.prototype.logout = function() {
-
+    if (this._authProxy) {
+        throw new Error('Logout is not supported in Auth Proxy mode');
+    }
     return (new this._externals.Promise(function(resolve) {
 
         this.emit(this.events.beforeLogout);
@@ -1948,7 +1958,9 @@ Platform.prototype.inflateRequest = function(request, options) {
 
         request.headers.set('X-User-Agent', this._userAgent);
         request.headers.set('Client-Id', this._appKey);
-        request.headers.set('Authorization', this._authHeader());
+        if (!this._authProxy) {
+            request.headers.set('Authorization', this._authHeader());
+        }
         //request.url = this.createUrl(request.url, {addServer: true}); //FIXME Spec prevents this...
 
         return request;
@@ -1981,8 +1993,12 @@ Platform.prototype.sendRequest = function(request, options) {
         var response = e.apiResponse.response();
         var status = response.status;
 
-        if ((status != ApiResponse._unauthorizedStatus) &&
-            (status != ApiResponse._rateLimitStatus)) throw e;
+        if (((status != ApiResponse._unauthorizedStatus) &&
+                (status != ApiResponse._rateLimitStatus)
+            ) || this._authProxy
+        ) {
+            throw e;
+        }
 
         options.retry = true;
 
@@ -2008,7 +2024,7 @@ Platform.prototype.sendRequest = function(request, options) {
         }
 
         return this.delay(retryAfter).then(function() {
-            return this.sendRequest(request, options);
+            return this.sendRequest(this._client.createRequest(options), options);
         }.bind(this));
 
     }.bind(this));
@@ -2092,6 +2108,9 @@ Platform.prototype['delete'] = function(url, query, options) {
 };
 
 Platform.prototype.ensureLoggedIn = function() {
+    if (this._authProxy) {
+        return null;
+    }
     if (this._isAccessTokenValid()) return this._externals.Promise.resolve();
     return this.refresh();
 };
@@ -2274,7 +2293,7 @@ module.exports = Auth;
 /* 17 */
 /***/ function(module, exports, __webpack_require__) {
 
-var version = ("3.2.0");
+var version = ("3.2.2");
 
 // This will become false during the Webpack build, so no traces of package.json will be there
 if (false) {
