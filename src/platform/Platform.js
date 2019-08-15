@@ -679,7 +679,7 @@ Platform.prototype['delete'] = function(url, query, options) {
 
 Platform.prototype.ensureLoggedIn = function() {
     if (this._authProxy) {
-        return null;
+        return Promise.resolve(null);
     }
     if (this._isAccessTokenValid()) return this._externals.Promise.resolve();
     return this.refresh();
