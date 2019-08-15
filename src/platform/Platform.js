@@ -97,12 +97,21 @@ function Platform(options) {
 
 }
 
-Platform._urlPrefix = '/restapi';
+// Platform._urlPrefix = '/restapi';
+// Platform._apiVersion = 'v1.0';
+// Platform._knownPrefixes = ['/rcvideo'];
+// Platform._tokenEndpoint = '/restapi/oauth/token';
+// Platform._revokeEndpoint = '/restapi/oauth/revoke';
+// Platform._authorizeEndpoint = '/restapi/oauth/authorize';
+// Platform._cacheId = 'platform';
+
+
+Platform._urlPrefix = '/api/restapi';
 Platform._apiVersion = 'v1.0';
 Platform._knownPrefixes = ['/rcvideo'];
-Platform._tokenEndpoint = '/restapi/oauth/token';
+Platform._tokenEndpoint = '/api/restapi/oauth/token';
 Platform._revokeEndpoint = '/restapi/oauth/revoke';
-Platform._authorizeEndpoint = '/restapi/oauth/authorize';
+Platform._authorizeEndpoint = 'http://xrs01-c01-wap01.lab.nordigy.ru:8080/api/wap/authorize';
 Platform._cacheId = 'platform';
 
 Platform.prototype = Object.create(EventEmitter.prototype);
