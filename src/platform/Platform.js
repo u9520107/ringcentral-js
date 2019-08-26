@@ -189,7 +189,7 @@ Platform.prototype.loginUrl = function(options) {
 
     return this.createUrl(Platform._authorizeEndpoint + '?' + qs.stringify({
             'response_type': options.implicit ? 'token' : 'code',
-            'redirect_uri': options.redirectUri || this._redirectUri,
+            // 'redirect_uri': options.redirectUri || this._redirectUri,
             'client_id': this._appKey,
             'state': options.state || '',
             'brand_id': options.brandId || '',
@@ -316,7 +316,7 @@ Platform.prototype.loginWindow = function(options) {
  */
 Platform.prototype.loggedIn = function() {
     return Promise.resolve().then(function () {
-        if (this.authProxy) {
+        if (this._authProxy) {
             return this.get('/restapi/v1.0/client-info');
         }
         return this.ensureLoggedIn();
