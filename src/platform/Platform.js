@@ -111,7 +111,7 @@ Platform._apiVersion = 'v1.0';
 Platform._knownPrefixes = ['/rcvideo'];
 Platform._tokenEndpoint = '/api/restapi/oauth/token';
 Platform._revokeEndpoint = '/restapi/oauth/revoke';
-Platform._authorizeEndpoint = 'http://xrs01-c01-wap01.lab.nordigy.ru:8080/api/wap/authorize';
+Platform._authorizeEndpoint = 'http://itl01-t01-wap01.lab.nordigy.ru:8080/api/wap/authorize';
 Platform._cacheId = 'platform';
 
 Platform.prototype = Object.create(EventEmitter.prototype);
